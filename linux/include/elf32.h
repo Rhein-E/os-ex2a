@@ -2,7 +2,7 @@
 #define ELF32_H
 
 typedef struct {
-    unsigned char magic[16];
+    unsigned char ident[16];
     unsigned short type;
     unsigned short machine;
     unsigned long version;
