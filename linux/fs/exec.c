@@ -21,6 +21,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <a.out.h>
+#include <elf32.h>
 
 #include <linux/fs.h>
 #include <linux/sched.h>
@@ -176,6 +177,49 @@ static unsigned long change_ldt(unsigned long text_size, unsigned long *page) {
 }
 
 /*
+ * 从硬盘块读入内核缓冲区
+ */
+int blk_read(int dev, unsigned long *pos, char *buf, int count) {
+    int block = *pos >> BLOCK_SIZE_BITS;
+    int offset = *pos & (BLOCK_SIZE - 1);
+    int chars;
+    int read = 0;
+    struct buffer_head *bh;
+    register char *p;
+
+    while (count > 0) {
+        chars = BLOCK_SIZE - offset;
+        if (chars > count)
+            chars = count;
+        if (!(bh = breada(dev, block, block + 1, block + 2, -1)))
+            return read ? read : -EIO;
+        block++;
+        p = offset + bh->b_data;
+        offset = 0;
+        *pos += chars;
+        read += chars;
+        count -= chars;
+        while (chars-- > 0)
+            *(buf++) = *(p++);
+        brelse(bh);
+    }
+    return read;
+}
+
+/*
+ * 'do_execve_elf()' by lxp & lzq
+ */
+int do_execve_elf(unsigned int *eip, m_inode *inode, char **argv, char **envp) {
+    unsigned long page[MAX_ARG_PAGES];
+    struct elf32_ehdr ehdr;
+    struct elf32_phdr *phdr;
+    struct buffer_head *bh;
+
+    if (ehdr.ident[3] != 0x1 || ehdr.ident[4] != 0x1 || ehdr.ident[5] != 0x1) // incompatible version
+        return 0;
+}
+
+/*
  * 'do_execve()' executes a new program.
  */
 int do_execve(unsigned long *eip, long tmp, char *filename, char **argv, char **envp) {
@@ -219,6 +263,11 @@ restart_interp:
         goto exec_error2;
     }
     ex = *((struct exec *)bh->b_data); /* read exec-header */
+
+    if (ex.a_magic == 0x464c457f) { // elf
+        do_execve_elf();
+        return 0;
+    }
     if ((bh->b_data[0] == '#') && (bh->b_data[1] == '!') && (!sh_bang)) {
         /*
          * This section does the #! interpretation.

@@ -1,7 +1,7 @@
 #ifndef ELF32_H
 #define ELF32_H
 
-typedef struct {
+typedef struct elf32_ehdr {
     unsigned char ident[16];
     unsigned short type;
     unsigned short machine;
@@ -16,9 +16,9 @@ typedef struct {
     unsigned short shdr_size;
     unsigned short shdr_num;
     unsigned short stridx;
-} elf32_ehdr;
+};
 
-typedef struct {
+typedef struct elf32_phdr {
     unsigned long type;
     unsigned long offset;
     unsigned long vaddr;
@@ -27,6 +27,6 @@ typedef struct {
     unsigned long memsize;
     unsigned long flags;
     unsigned long align;
-} elf32_phdr;
+};
 
 #endif // ELF32_H
