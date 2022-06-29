@@ -177,46 +177,87 @@ static unsigned long change_ldt(unsigned long text_size, unsigned long *page) {
 }
 
 /*
- * 从硬盘块读入内核缓冲区
- */
-int blk_read(int dev, unsigned long *pos, char *buf, int count) {
-    int block = *pos >> BLOCK_SIZE_BITS;
-    int offset = *pos & (BLOCK_SIZE - 1);
-    int chars;
-    int read = 0;
-    struct buffer_head *bh;
-    register char *p;
-
-    while (count > 0) {
-        chars = BLOCK_SIZE - offset;
-        if (chars > count)
-            chars = count;
-        if (!(bh = breada(dev, block, block + 1, block + 2, -1)))
-            return read ? read : -EIO;
-        block++;
-        p = offset + bh->b_data;
-        offset = 0;
-        *pos += chars;
-        read += chars;
-        count -= chars;
-        while (chars-- > 0)
-            *(buf++) = *(p++);
-        brelse(bh);
-    }
-    return read;
-}
-
-/*
  * 'do_execve_elf()' by lxp & lzq
  */
 int do_execve_elf(unsigned int *eip, m_inode *inode, char **argv, char **envp) {
     unsigned long page[MAX_ARG_PAGES];
     struct elf32_ehdr ehdr;
-    struct elf32_phdr *phdr;
+    struct elf32_phdr phdr;
     struct buffer_head *bh;
+    unsigned long offset;
+    int i, bid, nsize;
+    unsigned long p = PAGE_SIZE * MAX_ARG_PAGES - 4;
 
-    if (ehdr.ident[3] != 0x1 || ehdr.ident[4] != 0x1 || ehdr.ident[5] != 0x1) // incompatible version
+    offset = inode->zone[bid = 0] * BLOCK_SIZE;
+    block_read_k(inode->i_dev, &offset, &ehdr, 52);
+    if (ehdr.ident[3] != 0x1 || ehdr.ident[4] != 0x1 || ehdr.ident[5] != 0x1) {
+        printk("incompatible ELF version\n");
         return 0;
+    }
+    if (ehdr.type != 0x2) {
+        printk("not executable\n");
+        return 0;
+    }
+
+    p = copy_strings(envc, envp, page, p, 0);
+    p = copy_strings(argc, argv, page, p, 0);
+    p = 0x4000000;
+    p = (unsigned long)create_tables((char *)p, argc, envc);
+    current->start_stack = p & 0xfffff000;
+
+    current->start_code = 0xffffffff;
+    for (i = 0; i < ehdr.phdr_num; ++i) {
+        if ((nsize = block_read_k(inode->i_dev, &offset, &phdr, 32)) != 32 || !(offset & (BLOCK_SIZE - 1))) {
+            offset = inode->zone[++bid] * BLOCK_SIZE;
+            block_read_k(inode->i_dev, &offset, (char *)&phdr + nsize, 32 - nsize);
+        }
+        if (phdr.type == 0x1) { // PT_LOAD type
+            if (current->start_code > phdr.vaddr)
+                current->start_code = phdr.vaddr;
+            if ((phdr.flags & 0x1) && current->end_code < phdr.vaddr + phdr.memsize)
+                current->end_code = phdr.vaddr + phdr.memsize;
+            if (current->start_data < phdr.vaddr)
+                current->start_data = phdr.vaddr;
+            if (current->end_data < phdr.vaddr + phdr.memsize)
+                current->end_data = phdr.vaddr + phdr.memsize;
+            if (current->brk < phdr.vaddr + phdr.memsize)
+                current->brk = phdr.vaddr + phdr.memsize;
+        }
+    }
+    if (current->executable)
+        iput(current->executable);
+    current->executable = inode;
+    for (i = 0; i < 32; i++)
+        current->sigaction[i].sa_handler = NULL;
+    for (i = 0; i < NR_OPEN; i++)
+        if ((current->close_on_exec >> i) & 1)
+            sys_close(i);
+    current->close_on_exec = 0;
+    free_page_tables(get_base(current->ldt[1]), get_limit(0x0f));
+    free_page_tables(get_base(current->ldt[2]), get_limit(0x17));
+    current->used_math = 0;
+
+    // change_ldt
+    set_base(current->ldt[1], current->start_code);
+    set_limit(current->ldt[1], (current->end_code + PAGE_SIZE - 1) & 0xfffff000);
+    set_base(current->ldt[2], current->start_code);
+    set_limit(current->ldt[2], 0x4000000);
+    set_fs(0x17);
+    for (i = MAX_ARG_PAGES - 1; i >= 0; i--) {
+        data_base -= PAGE_SIZE;
+        if (page[i])
+            put_page(page[i], data_base);
+    }
+
+    if (last_task_used_math == current)
+        last_task_used_math = NULL;
+    if (i & S_ISUID)
+        current->euid = inode->i_uid;
+    if (i & S_ISUID)
+        current->egid = inode->i_gid;
+
+    eip[0] = ehdr.entry;
+    eip[3] p;
 }
 
 /*
@@ -265,6 +306,7 @@ restart_interp:
     ex = *((struct exec *)bh->b_data); /* read exec-header */
 
     if (ex.a_magic == 0x464c457f) { // elf
+        brelse(bh);
         do_execve_elf();
         return 0;
     }
