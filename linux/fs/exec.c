@@ -177,20 +177,22 @@ static unsigned long change_ldt(unsigned long text_size, unsigned long *page) {
 }
 
 /*
- * 'do_execve_elf()' by lxp & lzq
+ * 'execve_elf()' by lxp & lzq
  */
-int do_execve_elf(unsigned int *eip, m_inode *inode, char **argv, char **envp) {
-    unsigned long page[MAX_ARG_PAGES];
+int execve_elf(unsigned int *eip, unsigned long *page, struct m_inode *inode, char **argv, char **envp) {
     struct elf32_ehdr ehdr;
     struct elf32_phdr phdr;
     struct buffer_head *bh;
     unsigned long offset;
-    int i, bid, nsize;
+    int i, bid, nsize, argc, envc, oldfs;
     unsigned long p = PAGE_SIZE * MAX_ARG_PAGES - 4;
 
-    offset = inode->zone[bid = 0] * BLOCK_SIZE;
-    block_read_k(inode->i_dev, &offset, &ehdr, 52);
-    if (ehdr.ident[3] != 0x1 || ehdr.ident[4] != 0x1 || ehdr.ident[5] != 0x1) {
+    offset = inode->i_zone[bid = 0] * BLOCK_SIZE;
+    oldfs = get_fs();
+    set_fs(get_ds());
+    block_read(inode->i_dev, &offset, &ehdr, 52);
+    set_fs(oldfs);
+    if (ehdr.ident[4] != 0x1 || ehdr.ident[5] != 0x1 || ehdr.ident[6] != 0x1) {
         printk("incompatible ELF version\n");
         return 0;
     }
@@ -199,31 +201,11 @@ int do_execve_elf(unsigned int *eip, m_inode *inode, char **argv, char **envp) {
         return 0;
     }
 
+    envc = count(envp);
+    argc = count(argv);
     p = copy_strings(envc, envp, page, p, 0);
     p = copy_strings(argc, argv, page, p, 0);
-    p = 0x4000000;
-    p = (unsigned long)create_tables((char *)p, argc, envc);
-    current->start_stack = p & 0xfffff000;
 
-    current->start_code = 0xffffffff;
-    for (i = 0; i < ehdr.phdr_num; ++i) {
-        if ((nsize = block_read_k(inode->i_dev, &offset, &phdr, 32)) != 32 || !(offset & (BLOCK_SIZE - 1))) {
-            offset = inode->zone[++bid] * BLOCK_SIZE;
-            block_read_k(inode->i_dev, &offset, (char *)&phdr + nsize, 32 - nsize);
-        }
-        if (phdr.type == 0x1) { // PT_LOAD type
-            if (current->start_code > phdr.vaddr)
-                current->start_code = phdr.vaddr;
-            if ((phdr.flags & 0x1) && current->end_code < phdr.vaddr + phdr.memsize)
-                current->end_code = phdr.vaddr + phdr.memsize;
-            if (current->start_data < phdr.vaddr)
-                current->start_data = phdr.vaddr;
-            if (current->end_data < phdr.vaddr + phdr.memsize)
-                current->end_data = phdr.vaddr + phdr.memsize;
-            if (current->brk < phdr.vaddr + phdr.memsize)
-                current->brk = phdr.vaddr + phdr.memsize;
-        }
-    }
     if (current->executable)
         iput(current->executable);
     current->executable = inode;
@@ -235,6 +217,8 @@ int do_execve_elf(unsigned int *eip, m_inode *inode, char **argv, char **envp) {
     current->close_on_exec = 0;
     free_page_tables(get_base(current->ldt[1]), get_limit(0x0f));
     free_page_tables(get_base(current->ldt[2]), get_limit(0x17));
+    if (last_task_used_math == current)
+        last_task_used_math = NULL;
     current->used_math = 0;
 
     // change_ldt
@@ -243,21 +227,45 @@ int do_execve_elf(unsigned int *eip, m_inode *inode, char **argv, char **envp) {
     set_base(current->ldt[2], current->start_code);
     set_limit(current->ldt[2], 0x4000000);
     set_fs(0x17);
+    p = current->start_code + 0x4000000;
     for (i = MAX_ARG_PAGES - 1; i >= 0; i--) {
-        data_base -= PAGE_SIZE;
+        p -= PAGE_SIZE;
         if (page[i])
-            put_page(page[i], data_base);
+            put_page(page[i], p);
     }
 
-    if (last_task_used_math == current)
-        last_task_used_math = NULL;
+    oldfs = get_fs();
+    set_fs(get_ds());
+    current->start_code = 0xffffffff;
+    for (i = 0; i < ehdr.phdr_num; ++i) {
+        if ((nsize = block_read(inode->i_dev, &offset, &phdr, 32)) != 32 || !(offset & (BLOCK_SIZE - 1))) {
+            offset = inode->i_zone[++bid] * BLOCK_SIZE;
+            block_read(inode->i_dev, &offset, (char *)&phdr + nsize, 32 - nsize);
+        }
+        if (phdr.type == 0x1) { // PT_LOAD type
+            if (current->start_code > phdr.vaddr)
+                current->start_code = phdr.vaddr;
+            if ((phdr.flags & 0x1) && current->end_code < phdr.vaddr + phdr.memsize)
+                current->end_code = phdr.vaddr + phdr.memsize;
+            if (current->end_data < phdr.vaddr + phdr.memsize)
+                current->end_data = phdr.vaddr + phdr.memsize;
+            if (current->brk < phdr.vaddr + phdr.memsize)
+                current->brk = phdr.vaddr + phdr.memsize;
+        }
+    }
+    set_fs(oldfs);
+
+    p = 0x4000000 - MAX_ARG_PAGES * PAGE_SIZE;
+    p = (unsigned long)create_tables((char *)p, argc, envc);
+    current->start_stack = p & 0xfffff000;
     if (i & S_ISUID)
         current->euid = inode->i_uid;
     if (i & S_ISUID)
         current->egid = inode->i_gid;
 
     eip[0] = ehdr.entry;
-    eip[3] p;
+    eip[3] = p;
+    return 0;
 }
 
 /*
@@ -307,8 +315,8 @@ restart_interp:
 
     if (ex.a_magic == 0x464c457f) { // elf
         brelse(bh);
-        do_execve_elf();
-        return 0;
+        execve_elf(eip, page, inode, argv, envp);
+        goto exec_out;
     }
     if ((bh->b_data[0] == '#') && (bh->b_data[1] == '!') && (!sh_bang)) {
         /*
@@ -428,6 +436,7 @@ restart_interp:
         put_fs_byte(0, (char *)(i++));
     eip[0] = ex.a_entry; /* eip, magic happens :-) */
     eip[3] = p;          /* stack pointer */
+exec_out:
     return 0;
 exec_error2:
     iput(inode);
