@@ -221,47 +221,38 @@ int execve_elf(unsigned int *eip, unsigned long *page, struct m_inode *inode, ch
         last_task_used_math = NULL;
     current->used_math = 0;
 
-    // change_ldt
-    set_base(current->ldt[1], current->start_code);
-    set_limit(current->ldt[1], (current->end_code + PAGE_SIZE - 1) & 0xfffff000);
-    set_base(current->ldt[2], current->start_code);
-    set_limit(current->ldt[2], 0x4000000);
-    set_fs(0x17);
-    p = current->start_code + 0x4000000;
-    for (i = MAX_ARG_PAGES - 1; i >= 0; i--) {
-        p -= PAGE_SIZE;
-        if (page[i])
-            put_page(page[i], p);
-    }
-
     oldfs = get_fs();
     set_fs(get_ds());
-    current->start_code = 0xffffffff;
-    for (i = 0; i < ehdr.phdr_num; ++i) {
+    current->end_code = 0;
+    current->end_data = 0;
+    current->brk = 0;
+    for (i = 0; i < ehdr.phdr_num && bid < 7; ++i) {
         if ((nsize = block_read(inode->i_dev, &offset, &phdr, 32)) != 32 || !(offset & (BLOCK_SIZE - 1))) {
             offset = inode->i_zone[++bid] * BLOCK_SIZE;
+            if (bid > 7)
+                break;
             block_read(inode->i_dev, &offset, (char *)&phdr + nsize, 32 - nsize);
         }
         if (phdr.type == 0x1) { // PT_LOAD type
-            if (current->start_code > phdr.vaddr)
-                current->start_code = phdr.vaddr;
             if ((phdr.flags & 0x1) && current->end_code < phdr.vaddr + phdr.memsize)
                 current->end_code = phdr.vaddr + phdr.memsize;
-            if (current->end_data < phdr.vaddr + phdr.memsize)
+            if (phdr.vaddr + phdr.memsize <= 0x4000000 && current->end_data < phdr.vaddr + phdr.memsize)
                 current->end_data = phdr.vaddr + phdr.memsize;
-            if (current->brk < phdr.vaddr + phdr.memsize)
-                current->brk = phdr.vaddr + phdr.memsize;
         }
     }
+    current->brk = current->end_data;
     set_fs(oldfs);
 
-    p = 0x4000000 - MAX_ARG_PAGES * PAGE_SIZE;
+    p += change_ldt(current->end_code, page) - MAX_ARG_PAGES * PAGE_SIZE;
     p = (unsigned long)create_tables((char *)p, argc, envc);
     current->start_stack = p & 0xfffff000;
     if (i & S_ISUID)
         current->euid = inode->i_uid;
     if (i & S_ISUID)
         current->egid = inode->i_gid;
+    i = current->end_data;
+    while (i & 0xfff)
+        put_fs_byte(0, (char *)(i++));
 
     eip[0] = ehdr.entry;
     eip[3] = p;

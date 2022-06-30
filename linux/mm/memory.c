@@ -28,6 +28,9 @@
 #include <linux/head.h>
 #include <linux/kernel.h>
 
+#include <elf32.h>
+#include <asm/segment.h>
+
 volatile void do_exit(long code);
 
 static inline volatile void oom(void)
@@ -381,7 +384,34 @@ void do_no_page(unsigned long error_code,unsigned long address)
 	if (!(page = get_free_page()))
 		oom();
 /* remember that 1 block is used for header */
-	block = 1 + tmp/BLOCK_SIZE;
+/* not true for elf32 :( -lxp */
+	struct buffer_head *bh;
+	unsigned long offset;
+	int nsize, bid, oldfs;
+	struct elf32_ehdr ehdr;
+	struct elf32_phdr phdr;
+
+	offset = current->executable->i_zone[bid = 0] * BLOCK_SIZE;
+	oldfs = get_fs();
+	set_fs(get_ds());
+    nsize = block_read(current->executable->i_dev, &offset, &ehdr, 52);
+	if (nsize == 52 && *(unsigned long *)ehdr.ident == 0x464c457f) {
+		// elf
+		for (i = 0; i < ehdr.phdr_num && bid < 7; ++i) {
+			if ((nsize = block_read(current->executable->i_dev, &offset, &phdr, 32)) != 32 || !(offset & (BLOCK_SIZE - 1))) {
+				offset = current->executable->i_zone[++bid] * BLOCK_SIZE;
+				if (bid > 7)
+					break;
+				block_read(current->executable->i_dev, &offset, (char *)&phdr + nsize, 32 - nsize);
+			}
+			if ((tmp & ~(phdr.align - 1)) == phdr.vaddr)
+				tmp = tmp + phdr.offset - phdr.vaddr;
+		}
+		block = tmp/BLOCK_SIZE;
+	}
+	else
+		block = 1 + tmp/BLOCK_SIZE; // a.out
+	set_fs(oldfs);
 	for (i=0 ; i<4 ; block++,i++)
 		nr[i] = bmap(current->executable,block);
 	bread_page(page,current->executable->i_dev,nr);

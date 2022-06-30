@@ -1,0 +1,7 @@
+{
+	"files.associations": {
+		"stdio.h": "c",
+		"mm.h": "c",
+		"segment.h": "c"
+	}
+}
