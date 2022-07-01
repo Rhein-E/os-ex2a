@@ -226,18 +226,19 @@ int execve_elf(unsigned int *eip, unsigned long *page, struct m_inode *inode, ch
     current->end_code = 0;
     current->end_data = 0;
     current->brk = 0;
-    for (i = 0; i < ehdr.phdr_num && bid < 7; ++i) {
+    for (i = 0; i < ehdr.phdr_num; ++i) {
         if ((nsize = block_read(inode->i_dev, &offset, &phdr, 32)) != 32 || !(offset & (BLOCK_SIZE - 1))) {
-            offset = inode->i_zone[++bid] * BLOCK_SIZE;
-            if (bid > 7)
-                break;
+            offset = bmap(inode, ++bid) * BLOCK_SIZE;
             block_read(inode->i_dev, &offset, (char *)&phdr + nsize, 32 - nsize);
         }
         if (phdr.type == 0x1) { // PT_LOAD type
             if ((phdr.flags & 0x1) && current->end_code < phdr.vaddr + phdr.memsize)
                 current->end_code = phdr.vaddr + phdr.memsize;
-            if (phdr.vaddr + phdr.memsize <= 0x4000000 && current->end_data < phdr.vaddr + phdr.memsize)
+            if (phdr.vaddr + phdr.memsize < 0x4000000 && current->end_data < phdr.vaddr + phdr.memsize)
                 current->end_data = phdr.vaddr + phdr.memsize;
+            
+            // debug
+            printk("execve_elf: vaddr = 0x%08x\n", phdr.vaddr);
         }
     }
     current->brk = current->end_data;
