@@ -13,25 +13,23 @@ int str2int(int *dest, char *buf) {
     return 0;
 }
 
-int int2str(char *dest, int bufsize, int num) {
+int int2str(char *dest, int num) {
     char *p = dest;
     int tmp = num;
-    if (tmp < 0)
-        tmp = -tmp;
-    while (tmp) {
-        if (bufsize-- < 0)
-            return -1;
-        *(p++) = '0' + tmp % 10;
-        tmp /= 10;
+    if (tmp == 0)
+        *(p++) = '0';
+    else {
+        if (tmp < 0) {
+            tmp = -tmp;
+            *(dest++) = '-';
+            p = dest;
+        }
+        while (tmp) {
+            *(p++) = '0' + tmp % 10;
+            tmp /= 10;
+        }
     }
-    if (num < 0 && bufsize-- >= 0)
-        *(p++) = '-';
-    else if (bufsize < 0)
-        return -1;
-    if (bufsize-- >= 0)
-        *p = '\0';
-    else
-        return -1;
+    *p = '\0';
 
     while (dest < (--p)) {
         *dest ^= *p;
@@ -58,18 +56,26 @@ int print_string(char *buf) {
             : "ebx");
 }
 
-void exit(int errno) {
+void exit(int exit_code) {
     __asm__("movl $1, %%eax\n"
             "movl %%ebx, %%ebx\n"
             "int $0x80\n" // sys_exit
-            ::"b"(errno));
+            ::"b"(exit_code));
+    while (1)
+        ; // 防止编译警告
 }
 
-void main() {
-    int a = 123, b = -1123;
+int a, b;
+int main(int argc, char **argv, char **envp) {
     char buf[32];
 
-    int2str(buf, 32, a + b);
+    if (argc != 3) {
+        print_string("need 2 numbers\n");
+        exit(1);
+    }
+    str2int(&a, argv[1]);
+    str2int(&b, argv[2]);
+    int2str(buf, a + b);
     print_string(buf);
     print_string("\n");
 

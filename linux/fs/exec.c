@@ -231,14 +231,14 @@ int execve_elf(unsigned int *eip, unsigned long *page, struct m_inode *inode, ch
             offset = bmap(inode, ++bid) * BLOCK_SIZE;
             block_read(inode->i_dev, &offset, (char *)&phdr + nsize, 32 - nsize);
         }
-        if (phdr.type == 0x1) { // PT_LOAD type
-            if ((phdr.flags & 0x1) && current->end_code < phdr.vaddr + phdr.memsize)
+        if (phdr.type == 0x1) {                                                      // PT_LOAD type
+            if ((phdr.flags & 0x1) && current->end_code < phdr.vaddr + phdr.memsize) // executable
                 current->end_code = phdr.vaddr + phdr.memsize;
             if (phdr.vaddr + phdr.memsize < 0x4000000 && current->end_data < phdr.vaddr + phdr.memsize)
                 current->end_data = phdr.vaddr + phdr.memsize;
-            
+
             // debug
-            printk("execve_elf: vaddr = 0x%08x\n", phdr.vaddr);
+            // printk("execve_elf: vaddr = 0x%08x\n", phdr.vaddr);
         }
     }
     current->brk = current->end_data;
@@ -255,8 +255,8 @@ int execve_elf(unsigned int *eip, unsigned long *page, struct m_inode *inode, ch
     while (i & 0xfff)
         put_fs_byte(0, (char *)(i++));
 
-    eip[0] = ehdr.entry;
-    eip[3] = p;
+    eip[0] = ehdr.entry; // eip
+    eip[3] = p - 4;      // esp，不用标准库时-4修正
     return 0;
 }
 
@@ -305,7 +305,7 @@ restart_interp:
     }
     ex = *((struct exec *)bh->b_data); /* read exec-header */
 
-    if (ex.a_magic == 0x464c457f) { // elf
+    if (ex.a_magic == 0x464c457f) { // elf32
         brelse(bh);
         execve_elf(eip, page, inode, argv, envp);
         goto exec_out;

@@ -353,22 +353,23 @@ static int share_page(unsigned long address) {
 
 void do_no_page(unsigned long error_code, unsigned long address) {
     int nr[4];
-    unsigned long tmp;
+    unsigned long vaddr;
+    unsigned long alignaddr;
+    unsigned long alignvaddr;
     unsigned long page;
     int block, i;
 
-    address &= 0xfffff000;
-    tmp = address - current->start_code;
-    if (!current->executable || tmp >= current->end_data) {
-        get_empty_page(address);
+    alignaddr = address & 0xfffff000;
+    vaddr = address - current->start_code;
+    alignvaddr = vaddr & 0xfffff000;
+    if (!current->executable || alignvaddr >= current->end_data) {
+        get_empty_page(alignaddr);
         return;
     }
-    if (share_page(tmp))
+    if (share_page(alignvaddr))
         return;
     if (!(page = get_free_page()))
         oom();
-    /* remember that 1 block is used for header -Linus */
-    /* not true for elf32 :( -lxp */
     struct buffer_head *bh;
     unsigned long offset;
     int nsize, bid, oldfs;
@@ -380,36 +381,41 @@ void do_no_page(unsigned long error_code, unsigned long address) {
     set_fs(get_ds());
     nsize = block_read(current->executable->i_dev, &offset, &ehdr, 52);
     if (nsize == 52 && *(unsigned long *)ehdr.ident == 0x464c457f) {
-        // elf
+        // elf32
         for (i = 0; i < ehdr.phdr_num; ++i) {
             if ((nsize = block_read(current->executable->i_dev, &offset, &phdr, 32)) != 32 ||
                 !(offset & (BLOCK_SIZE - 1))) {
                 offset = bmap(current->executable, ++bid) * BLOCK_SIZE;
                 block_read(current->executable->i_dev, &offset, (char *)&phdr + nsize, 32 - nsize);
             }
-            if (tmp >= (phdr.vaddr & ~(phdr.align - 1)) && tmp < phdr.vaddr + phdr.memsize) {
-                tmp = tmp + phdr.offset - phdr.vaddr;
+            if (vaddr >= phdr.vaddr && vaddr <= phdr.vaddr + phdr.memsize) {
+                alignvaddr = alignvaddr + phdr.offset - phdr.vaddr;
                 break;
             }
         }
-        block = tmp / BLOCK_SIZE;
+        block = alignvaddr / BLOCK_SIZE;
         // debug
-        printk("do_no_page: address = 0x%08x\n", address);
-        printk("do_no_page: block = %d\n", block);
+        // printk("do_no_page: address = 0x%08x\n", address);
+        // printk("do_no_page: vaddr = 0x%08x\n", vaddr);
+        // printk("do_no_page: alignaddr = 0x%08x\n", alignaddr);
+        // printk("do_no_page: alignvaddr = 0x%08x\n", alignvaddr);
+        // printk("do_no_page: block = %d\n", block);
     } else
-        block = 1 + tmp / BLOCK_SIZE; // a.out
-
+        /* remember that 1 block is used for header -Linus */
+        /* not true for elf32 :( -lxp */
+        block = 1 + alignvaddr / BLOCK_SIZE; // a.out
     set_fs(oldfs);
+
     for (i = 0; i < 4; block++, i++)
         nr[i] = bmap(current->executable, block);
     bread_page(page, current->executable->i_dev, nr);
-    i = tmp + 4096 - current->end_data;
-    tmp = page + 4096;
+    i = alignvaddr + 4096 - current->end_data;
+    alignvaddr = page + 4096;
     while (i-- > 0) {
-        tmp--;
-        *(char *)tmp = 0;
+        alignvaddr--;
+        *(char *)alignvaddr = 0;
     }
-    if (put_page(page, address))
+    if (put_page(page, alignaddr))
         return;
     free_page(page);
     oom();

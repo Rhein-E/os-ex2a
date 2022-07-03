@@ -4,7 +4,7 @@
 typedef struct elf32_ehdr {
     unsigned char ident[16];
     unsigned short type;
-    unsigned short machine;
+    unsigned short machine;     
     unsigned long version;
     unsigned long entry;
     unsigned long phdr_off;
