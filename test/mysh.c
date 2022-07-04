@@ -1,45 +1,5 @@
 #define NULL ((void *)0)
 
-#define _syscall0(type,name) \
-type name(void) \
-{ \
-long __res; \
-__asm__ volatile ("int $0x80" \
-	: "=a" (__res) \
-	: "0" (__NR_##name)); \
-return (type) __res; \
-}
-
-#define _syscall1(type,name,atype,a) \
-type name(atype a) \
-{ \
-long __res; \
-__asm__ volatile ("int $0x80" \
-	: "=a" (__res) \
-	: "0" (__NR_##name),"b" ((long)(a))); \
-return (type) __res; \
-}
-
-#define _syscall2(type,name,atype,a,btype,b) \
-type name(atype a,btype b) \
-{ \
-long __res; \
-__asm__ volatile ("int $0x80" \
-	: "=a" (__res) \
-	: "0" (__NR_##name),"b" ((long)(a)),"c" ((long)(b))); \
-return (type) __res; \
-}
-
-#define _syscall3(type,name,atype,a,btype,b,ctype,c) \
-type name(atype a,btype b,ctype c) \
-{ \
-long __res; \
-__asm__ volatile ("int $0x80" \
-	: "=a" (__res) \
-	: "0" (__NR_##name),"b" ((long)(a)),"c" ((long)(b)),"d" ((long)(c))); \
-return (type) __res; \
-}
-
 volatile void exit(int exit_code) {
     __asm__("int $0x80" ::"a"(1), "b"((long)exit_code));
     while (1)
